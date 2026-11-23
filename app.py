@@ -389,6 +389,33 @@ elif page == "대시보드":
     c[1].metric("누적 매수", f"{buy_all:,.2f}주")
     c[2].metric("아직 되사지 않은 수량", f"{out_qty:,.0f}주", f"전략 적용 한도 {strat_qty:,.0f}주", delta_color="off")
     c[3].metric("진행 중 Stage", f"{sum(1 for v in views.values() if v.phase not in ACTIVE_DONE)} / {len(stages)}")
+
+    # 원금 회복
+    st.subheader("원금 회복")
+    avg_price = fnum(portfolio.get("initial_avg_price"))
+    principal = fnum(portfolio.get("initial_shares")) * avg_price + fnum(portfolio.get("initial_cash"))
+    if avg_price <= 0:
+        st.info("설정에서 평단가를 입력하면 원금 회복률과 손익분기 주가를 계산합니다.")
+    elif not ref_price:
+        st.info("최근 종가를 불러오지 못해 원금 회복률을 계산하지 못했습니다.")
+    else:
+        rec = S.recovery_stats(principal, shares_now, cash_now, ref_price)
+        c = st.columns(4)
+        c[0].metric("원금", money(principal), f"평단가 {money(avg_price)}", delta_color="off")
+        c[1].metric("원금 회복률", f"{rec['recovery'] * 100:.2f}%",
+                    f"평가액 {money(rec['equity'])}", delta_color="off")
+        c[2].metric("원금까지 필요한 상승률",
+                    "회복 완료" if rec["need"] <= 0 else f"+{rec['need'] * 100:.2f}%",
+                    f"최근 종가 {money(ref_price)}", delta_color="off")
+        be = rec["breakeven"]
+        if be is None:
+            c[3].metric("손익분기 주가", "—")
+        else:
+            c[3].metric("손익분기 주가", money(be),
+                        f"그냥 보유 시 {money(avg_price)} 대비 {(be / avg_price - 1) * 100:+.2f}%",
+                        delta_color="inverse")
+        st.caption("원금 = 초기 보유수량 × 평단가 + 초기 현금 · 원금 회복률 = 현재 평가액 ÷ 원금 · "
+                   "손익분기 주가 = (원금 − 현재 현금) ÷ 현재 보유수량. 수수료·세금·환율은 거래 원장에 입력한 수수료만 반영됩니다.")
     if out_qty > strat_qty + S.EPS:
         st.warning(f"진행 중 Stage에서 되사지 않은 수량({out_qty:,.0f}주)이 전략 적용 한도({strat_qty:,.0f}주)를 넘었습니다.")
     if shares_now < -S.EPS:
@@ -698,7 +725,7 @@ elif page == "백테스트":
                     res.append({k: v for k, v in out.items() if k not in ("거래내역", "일별자산")})
                 summ = pd.DataFrame(res).sort_values("수익률(%)", ascending=False).reset_index(drop=True)
             st.session_state.bt_result = dict(summary=summ, details=det, ticker=bt_ticker, start=bt_start, end=bt_end,
-                                       prices=px)
+                                       prices=px, avg0=avg0)
         except Exception as e:
             st.session_state.pop("bt_result", None)
             st.error(f"실행 오류: {e}")
@@ -727,6 +754,13 @@ elif page == "백테스트":
         c[1].metric("최종 보유 수량", f"{d['최종주식수']:,.4f}")
         c[2].metric("현금", money(d["최종현금($)"]))
         c[3].metric("MDD", f"{d['MDD(%)']:.2f}%")
+        c = st.columns(4)
+        c[0].metric("원금 회복률", f"{d['원금 회복률(%)']:.2f}%")
+        be = d["손익분기 주가($)"]
+        c[1].metric("손익분기 주가", money(be) if pd.notna(be) else "—",
+                    f"평단가 {money(b['avg0'])} 대비 {(be / b['avg0'] - 1) * 100:+.2f}%" if pd.notna(be) else None,
+                    delta_color="inverse")
+        c[2].metric("마지막 종가", money(d["마지막종가($)"]))
         st.dataframe(d["거래내역"], use_container_width=True, hide_index=True)
         st.line_chart(d["일별자산"]["Equity"])
         out = BytesIO()
@@ -757,6 +791,8 @@ elif page == "설정":
         pcash = c[2].number_input("초기 현금 (USD)", min_value=0.0, value=fnum(portfolio.get("initial_cash")), step=100.0)
         c = st.columns(3)
         pshares = c[0].number_input("초기 보유수량", min_value=0.0, value=fnum(portfolio.get("initial_shares")), step=1.0)
+        pavg = st.number_input("초기 보유분 평단가 (USD, 원금 회복 계산용)", min_value=0.0,
+                               value=fnum(portfolio.get("initial_avg_price")), step=0.01, format="%.4f")
         pratio = c[1].number_input("전략 적용 비율 (%)", min_value=0.0, max_value=100.0,
                                    value=fnum(portfolio.get("strategy_ratio"), 0.5) * 100, step=1.0)
         pper = c[2].number_input("기본 1회 매도·매수 수량", min_value=1.0, value=per_default, step=1.0)
@@ -780,6 +816,7 @@ elif page == "설정":
             db(lambda: sb.table("portfolios").update({
                 "name": pname, "symbol": psym.strip().upper(), "initial_cash": pcash, "initial_shares": pshares,
                 "strategy_ratio": pratio / 100, "per_trade_qty": pper, "interval_schedule": sc,
+                "initial_avg_price": pavg,
                 "makeup1_rule": m1, "makeup2_rule": m2, "makeup_basis": m3}).eq("id", pid).execute(), "설정 저장")
             flash("설정을 저장했습니다.")
             st.rerun()

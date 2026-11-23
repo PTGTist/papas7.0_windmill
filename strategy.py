@@ -558,6 +558,24 @@ def equity_curve(initial_shares: float, initial_cash: float, txs: pd.DataFrame,
     return out
 
 
+def recovery_stats(principal: float, shares: float, cash: float, price: float) -> dict:
+    """원금 회복 지표.
+    recovery: 평가액 ÷ 원금, need: 원금까지 필요한 주가 상승률(0 이하면 회복 완료),
+    breakeven: 원금이 되는 주가 = (원금 − 현금) ÷ 보유수량 (보유수량이 없으면 None)
+    """
+    equity = shares * price + cash
+    recovery = equity / principal if principal > 0 else np.nan
+    stock = shares * price
+    if principal <= 0:
+        need = np.nan
+    elif equity >= principal:
+        need = 0.0
+    else:
+        need = (principal - cash) / stock - 1 if stock > 0 else np.inf
+    breakeven = max(0.0, (principal - cash) / shares) if shares > EPS else None
+    return {"equity": equity, "recovery": recovery, "need": need, "breakeven": breakeven}
+
+
 # ---------------------------------------------------------------- 백테스트
 def run_backtest(daily_all: pd.DataFrame, signals: Signals, start: date, end: date,
                  shares0: float, avg0: float, gap: float, rules: Rules,
@@ -693,6 +711,8 @@ def run_backtest(daily_all: pd.DataFrame, signals: Signals, start: date, end: da
         "보유만 했을 때 수익률(%)": (hold / initial_equity - 1) * 100 if initial_equity else 0.0,
         "초과수익($)": final - hold,
         "MDD(%)": mdd, "보유만 했을 때 MDD(%)": hold_mdd,
+        "원금 회복률(%)": final / initial_equity * 100 if initial_equity else np.nan,
+        "손익분기 주가($)": max(0.0, (initial_equity - cash) / shares) if shares > EPS else np.nan,
         "등비재매수체결": len(done), "1차메이크업": "실행" if s1 else "미실행",
         "2차메이크업": "실행" if s2 else "미실행",
         "기준매도가($)": base if base else np.nan, "마지막종가($)": last,
