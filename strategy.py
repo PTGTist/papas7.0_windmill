@@ -8,8 +8,10 @@
 3. 등비 재매수: n차 지정가 = 기준가 × (1 − 간격)^n, 매도 기간이 끝난 다음 거래일부터
 4. 1차 메이크업: 확정 주봉 몸통 하단 > 5주선 → 다음 거래일부터 5일 종가 LOC,
    예산 = 매도대금 × 50% − 이미 쓴 매수금액
-5. 2차 메이크업: 1차 이후, 30주선이 전주보다 낮지 않고 몸통 하단 > 300주선 →
-   다음 거래일부터 5일 종가 LOC, 예산 = 매도대금 − 쓴 매수금액 − 진행 중인 1차 잔여예산
+5. 2차 메이크업: 1차 이후, 30주선이 전주보다 낮지 않고(횡보·상승) 몸통 하단 > 30주선
+   (5·30주선 골든크로스, 원문 기준) → 다음 거래일부터 5일 종가 LOC,
+   예산 = 매도대금 − 쓴 매수금액 − 진행 중인 1차 잔여예산
+   ※ 이전 기본값 '몸통 > 300주선'은 원문 '30이평선'을 잘못 읽은 것이라 선택지로만 남긴다.
 """
 from __future__ import annotations
 
@@ -46,7 +48,7 @@ def default_interval(stage_no: int, schedule: list[float] | None = None) -> floa
 @dataclass
 class Rules:
     mk1_rule: str = "above"      # above: 5주선 위에 있음(백테스트) / cross: 아래에 있다가 회복
-    mk2_rule: str = "weekly300"  # weekly300: 30주선 횡보·상승+300주선 위(백테스트) / daily30: 일봉 30일선 회복(엑셀)
+    mk2_rule: str = "weekly30"   # weekly30: 30주선 횡보·상승+몸통 30주선 위(원문) / weekly300: 300주선(이전 기본값) / daily30: 일봉 30일선(엑셀)
     basis: str = "amount"        # amount: 매도대금 기준(백테스트) / quantity: 매도수량 기준(엑셀)
     mk1_ratio: float = 0.5
     mk_days: int = 5
@@ -55,7 +57,7 @@ class Rules:
     def from_portfolio(cls, p: dict) -> "Rules":
         return cls(
             mk1_rule=p.get("makeup1_rule") or "above",
-            mk2_rule=p.get("makeup2_rule") or "weekly300",
+            mk2_rule=p.get("makeup2_rule") or "weekly30",
             basis=p.get("makeup_basis") or "amount",
         )
 
@@ -63,7 +65,8 @@ class Rules:
 RULE_LABELS = {
     "above": "5주선 위에 있음 (백테스트 방식)",
     "cross": "5주선 아래에 있다가 회복",
-    "weekly300": "30주선 횡보·상승 + 몸통 > 300주선 (백테스트 방식)",
+    "weekly30": "30주선 횡보·상승 + 몸통 > 30주선 (원문 방식)",
+    "weekly300": "30주선 횡보·상승 + 몸통 > 300주선 (이전 기본값)",
     "daily30": "일봉 몸통 > 30일선 (엑셀 방식)",
     "amount": "금액 기준: 매도대금의 50%·100% (백테스트 방식)",
     "quantity": "수량 기준: 매도수량의 50%·100% (엑셀 방식)",
@@ -204,6 +207,7 @@ def weekly_bars(daily: pd.DataFrame, last_closed: date | None = None) -> pd.Data
     w["week_end"] = [x.date() for x in w.index]
     w["cond1"] = (w["BODY_LOW"] > w["MA5"]).fillna(False)
     w["cond2"] = ((w["MA30"] >= w["MA30_prev"]) & (w["BODY_LOW"] > w["MA300"])).fillna(False)
+    w["cond2_30"] = ((w["MA30"] >= w["MA30_prev"]) & (w["BODY_LOW"] > w["MA30"])).fillna(False)
     if last_closed is not None:
         done = [
             (sd <= last_closed) and (we <= last_closed or next_trading_day(sd) > we)
@@ -229,15 +233,24 @@ def daily_bars(daily: pd.DataFrame, last_closed: date | None = None) -> pd.DataF
 class Signals:
     """확정된 신호 모음. 날짜는 '신호를 확인한 거래일'(주봉이면 그 주 마지막 거래일)."""
     mk1: dict          # date -> bool (주봉 몸통 하단 > 5주선)
-    mk2_weekly: dict   # date -> bool
-    mk2_daily: dict    # date -> bool
+    mk2_weekly: dict   # date -> bool (30주선 횡보·상승 + 몸통 하단 > 300주선)
+    mk2_daily: dict    # date -> bool (일봉 몸통 하단 > 30일선)
+    mk2_weekly30: dict = field(default_factory=dict)  # date -> bool (30주선 횡보·상승 + 몸통 하단 > 30주선)
 
     @classmethod
     def build(cls, weekly: pd.DataFrame, daily: pd.DataFrame | None = None) -> "Signals":
         mk1 = dict(zip(weekly["signal_date"], weekly["cond1"].astype(bool)))
         mk2w = dict(zip(weekly["signal_date"], weekly["cond2"].astype(bool)))
         mk2d = dict(zip(daily["day"], daily["cond_d30"].astype(bool))) if daily is not None else {}
-        return cls(mk1, mk2w, mk2d)
+        mk2w30 = dict(zip(weekly["signal_date"], weekly["cond2_30"].astype(bool)))
+        return cls(mk1, mk2w, mk2d, mk2w30)
+
+    def mk2_source(self, rule: str) -> dict:
+        if rule == "daily30":
+            return self.mk2_daily
+        if rule == "weekly300":
+            return self.mk2_weekly
+        return self.mk2_weekly30
 
     def mk1_trigger(self, after: date, first_sell: date, rule: str, before: date | None = None) -> date | None:
         """after(마지막 매도일) 이후 처음 나오는 1차 신호일. before(주문할 장) 전에 확정된 신호만 본다."""
@@ -253,7 +266,7 @@ class Signals:
         return None
 
     def mk2_trigger(self, after: date, rule: str, before: date | None = None) -> date | None:
-        src = self.mk2_daily if rule == "daily30" else self.mk2_weekly
+        src = self.mk2_source(rule)
         for d in sorted(src):
             if before is not None and d >= before:
                 break
@@ -619,7 +632,7 @@ def run_backtest(daily_all: pd.DataFrame, signals: Signals, start: date, end: da
                     budget = max(0.0, proceeds * rules.mk1_ratio - spend)
                     if budget > 0:
                         queue.append({"name": "1차 메이크업", "budget": min(budget, cash), "days": rules.mk_days})
-            src = signals.mk2_daily if rules.mk2_rule == "daily30" else signals.mk2_weekly
+            src = signals.mk2_source(rules.mk2_rule)
             if not s2 and s1 and src.get(dd):
                 s2 = True
                 if use_qty:

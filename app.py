@@ -277,6 +277,7 @@ def orders_table(orders: list) -> pd.DataFrame:
 
 
 ACTIVE_DONE = ("완료", "종료(수동)")
+MK2_RULES = ["weekly30", "weekly300", "daily30"]
 
 # ================================================================ 오늘 할 일
 if page == "오늘 할 일":
@@ -295,10 +296,14 @@ if page == "오늘 할 일":
             d = dailyb.iloc[-1]
             c3.metric("2차 조건: 일봉 몸통 > 30일선", "충족" if d["cond_d30"] else "미충족",
                       f"30일선 {money(d['MA30D'])}", delta_color="off")
-        else:
+        elif rules.mk2_rule == "weekly300":
             trend = "상승·횡보" if w["MA30"] >= w["MA30_prev"] else "하락"
             c3.metric("2차 조건: 30주선↑ + 몸통 > 300주선", "충족" if w["cond2"] else "미충족",
                       f"30주선 {trend} · 300주선 {money(w['MA300'])}", delta_color="off")
+        else:
+            trend = "상승·횡보" if w["MA30"] >= w["MA30_prev"] else "하락"
+            c3.metric("2차 조건: 30주선↑ + 몸통 > 30주선", "충족" if w["cond2_30"] else "미충족",
+                      f"30주선 {money(w['MA30'])} · {trend}", delta_color="off")
     else:
         st.warning("가격 데이터가 없어 메이크업 신호를 판정하지 못했습니다. 매도·재매수 지시는 정상입니다.")
 
@@ -646,7 +651,8 @@ elif page == "신호·차트":
     tbl = pd.DataFrame({
         "주(금)": h.week_end, "확인일": h.signal_date, "몸통 하단": h.BODY_LOW.round(2), "5주선": h.MA5.round(2),
         "1차 조건": np.where(h.cond1, "충족", "-"), "30주선": h.MA30.round(2), "전주 30주선": h.MA30_prev.round(2),
-        "300주선": h.MA300.round(2), "2차 조건": np.where(h.cond2, "충족", "-")})
+        "2차 조건(30주선)": np.where(h.cond2_30, "충족", "-"),
+        "300주선": h.MA300.round(2), "2차 조건(300주선)": np.where(h.cond2, "충족", "-")})
     st.dataframe(tbl, use_container_width=True, hide_index=True)
 
 # ================================================================ 백테스트
@@ -666,7 +672,7 @@ elif page == "백테스트":
         c = st.columns(3)
         r1 = c[0].selectbox("1차 규칙", ["above", "cross"], index=["above", "cross"].index(rules.mk1_rule),
                             format_func=lambda k: S.RULE_LABELS[k])
-        r2 = c[1].selectbox("2차 규칙", ["weekly300", "daily30"], index=["weekly300", "daily30"].index(rules.mk2_rule),
+        r2 = c[1].selectbox("2차 규칙", MK2_RULES, index=MK2_RULES.index(rules.mk2_rule) if rules.mk2_rule in MK2_RULES else 0,
                             format_func=lambda k: S.RULE_LABELS[k])
         r3 = c[2].selectbox("메이크업 크기", ["amount", "quantity"], index=["amount", "quantity"].index(rules.basis),
                             format_func=lambda k: S.RULE_LABELS[k])
@@ -759,8 +765,9 @@ elif page == "설정":
         st.write("**메이크업 규칙**")
         m1 = st.radio("1차 메이크업 신호", ["above", "cross"], index=["above", "cross"].index(rules.mk1_rule),
                       format_func=lambda k: S.RULE_LABELS[k])
-        m2 = st.radio("2차 메이크업 신호", ["weekly300", "daily30"],
-                      index=["weekly300", "daily30"].index(rules.mk2_rule), format_func=lambda k: S.RULE_LABELS[k])
+        m2 = st.radio("2차 메이크업 신호", MK2_RULES,
+                      index=MK2_RULES.index(rules.mk2_rule) if rules.mk2_rule in MK2_RULES else 0,
+                      format_func=lambda k: S.RULE_LABELS[k])
         m3 = st.radio("메이크업 크기", ["amount", "quantity"], index=["amount", "quantity"].index(rules.basis),
                       format_func=lambda k: S.RULE_LABELS[k])
         if st.form_submit_button("설정 저장"):

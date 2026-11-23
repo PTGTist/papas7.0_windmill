@@ -1,4 +1,4 @@
--- PAPAS 7.0 Windmill: Supabase SQL (v2)
+-- PAPAS 7.0 Windmill: Supabase SQL (v3)
 -- Supabase Dashboard > SQL Editor에서 전체 실행하세요.
 -- 처음 설치할 때와 이전 버전을 이미 실행한 DB 모두에서 그대로 다시 실행해도 됩니다.
 create extension if not exists pgcrypto;
@@ -19,7 +19,10 @@ alter table public.portfolios add column if not exists per_trade_qty numeric not
 alter table public.portfolios add column if not exists sell_count integer not null default 5;
 alter table public.portfolios add column if not exists interval_schedule numeric[] not null default '{0.05,0.045,0.04,0.035,0.03}';
 alter table public.portfolios add column if not exists makeup1_rule text not null default 'above';
-alter table public.portfolios add column if not exists makeup2_rule text not null default 'weekly300';
+alter table public.portfolios add column if not exists makeup2_rule text not null default 'weekly30';
+-- 2차 메이크업 기본 규칙 변경(v3): 원문의 '30이평선'을 300주선으로 잘못 읽었던 이전 기본값을 바로잡는다.
+alter table public.portfolios alter column makeup2_rule set default 'weekly30';
+update public.portfolios set makeup2_rule = 'weekly30' where makeup2_rule = 'weekly300';
 alter table public.portfolios add column if not exists makeup_basis text not null default 'amount';
 
 -- ---------------------------------------------------------------- Stage
