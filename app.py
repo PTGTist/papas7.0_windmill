@@ -697,13 +697,13 @@ elif page == "백테스트":
                     det[(r, g)] = out
                     res.append({k: v for k, v in out.items() if k not in ("거래내역", "일별자산")})
                 summ = pd.DataFrame(res).sort_values("수익률(%)", ascending=False).reset_index(drop=True)
-            st.session_state.bt = dict(summary=summ, details=det, ticker=bt_ticker, start=bt_start, end=bt_end,
+            st.session_state.bt_result = dict(summary=summ, details=det, ticker=bt_ticker, start=bt_start, end=bt_end,
                                        prices=px)
         except Exception as e:
-            st.session_state.pop("bt", None)
+            st.session_state.pop("bt_result", None)
             st.error(f"실행 오류: {e}")
-    if "bt" in st.session_state:
-        b = st.session_state.bt
+    if "bt_result" in st.session_state:
+        b = st.session_state.bt_result
         summ, det = b["summary"], b["details"]
         st.success(f"{b['ticker']} · {b['start']} ~ {b['end']} · {len(summ)}개 시나리오")
         best = summ.iloc[0]
